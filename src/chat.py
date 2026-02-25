@@ -29,37 +29,84 @@ def run_simple_chat():
         st.chat_message("assistant").write(answer)
 
 
-def run_rag_chat():
-    if not st.session_state.documents_ready:
-        uploaded_files = st.file_uploader(
-            "Upload Documents", type=["pdf"], accept_multiple_files=True
-        )
+def _process_documents(uploaded_files):
+    if not uploaded_files:
+        st.warning("Please upload documents first.")
+        return
 
-        if st.button("Process Documents"):
-            if not uploaded_files:
-                st.warning("Please upload documents first.")
-                return
+    with st.status("Processing documents...", expanded=True) as status:
+        save_uploaded_files(uploaded_files)
 
-            with st.status("Processing documents...", expanded=True) as status:
-                save_uploaded_files(uploaded_files)
+        status.write("Loading documents...")
+        documents = load_documents()
 
-                status.write("Loading documents...")
-                documents = load_documents()
+        status.write("Splitting documents...")
+        texts = split_documents(documents)
 
-                status.write("Splitting documents...")
-                texts = split_documents(documents)
+        status.write("Creating embeddings...")
+        st.session_state.retriever = create_vectorstore(texts)
+        if st.session_state.retriever is None:
+            status.update(label="Failed to create vectorstore.", state="error")
+            return
 
-                status.write("Creating embeddings...")
-                st.session_state.retriever = create_vectorstore(texts)
+        cleanup_temp_files()
+        status.update(label="Documents ready!", state="complete")
 
-                cleanup_temp_files()
-                status.update(label="Documents ready!", state="complete")
+    st.session_state.documents_ready = True
+    st.session_state.index_nonempty = True
+    st.rerun()
 
-            st.session_state.documents_ready = True
+
+def _index_nonempty_flag():
+    return bool(st.session_state.get("index_nonempty", False))
+
+
+def _render_upload_panel(index_nonempty):
+    if "hide_upload_menu" not in st.session_state:
+        st.session_state.hide_upload_menu = False
+
+    # If the index is empty, the upload panel can't be hidden.
+    if not index_nonempty:
+        st.session_state.hide_upload_menu = False
+
+    if index_nonempty and st.session_state.hide_upload_menu:
+        if st.button("Show upload menu", key="show_upload_menu"):
+            st.session_state.hide_upload_menu = False
+            st.rerun()
+        return
+
+    header_cols = st.columns([0.92, 0.08])
+    header_cols[0].markdown("**Upload Documents**")
+    if index_nonempty:
+        if header_cols[1].button(
+            "✕",
+            key="hide_upload_menu_btn",
+            help="Hide upload menu",
+            use_container_width=True,
+        ):
+            st.session_state.hide_upload_menu = True
             st.rerun()
 
-    if st.session_state.documents_ready:
+    uploaded_files = st.file_uploader(
+        "Upload Documents",
+        type=["pdf"],
+        accept_multiple_files=True,
+        key="rag_upload_documents",
+    )
+
+    if st.button("Process Documents", key="process_documents"):
+        _process_documents(uploaded_files)
+
+
+def render_rag_upload_panel():
+    _render_upload_panel(index_nonempty=_index_nonempty_flag())
+
+
+def render_rag_chat_box():
+    if st.session_state.documents_ready and st.session_state.retriever:
         if query := st.chat_input("Ask about your documents..."):
             st.chat_message("human").write(query)
             answer = query_llm(st.session_state.retriever, query)
             st.chat_message("assistant").write(answer)
+    elif st.session_state.documents_ready and not st.session_state.retriever:
+        st.error("Retriever is not available. Please process documents again.")

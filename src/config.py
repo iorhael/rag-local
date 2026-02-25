@@ -18,7 +18,7 @@ SYSTEM_PROMPT = (
 )
 
 
-def validate_api_keys() -> bool:
+def validate_api_keys():
     required = ["OPEN_ROUTER_API_KEY", "PINECONE_API_KEY", "PINECONE_INDEX"]
     for key in required:
         if not os.getenv(key):
